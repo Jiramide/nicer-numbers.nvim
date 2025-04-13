@@ -34,7 +34,11 @@ local function update_number_signs(args)
   local bot_line = vim.fn.line("w$")
 
   local query = get_number_query(number_nodes)
-  local number_query = vim.treesitter.query.parse(language, query)
+  local ok, number_query = pcall(vim.treesitter.query.parse, language, query)
+
+  if ok == false then
+    return
+  end
 
   vim.api.nvim_buf_clear_namespace(bufnr, M.extmarks_ns, top_line, bot_line)
 
