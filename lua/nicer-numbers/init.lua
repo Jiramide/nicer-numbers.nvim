@@ -31,8 +31,8 @@ local function update_number_signs(args)
 
   vim.api.nvim_buf_clear_namespace(bufnr, M.extmarks_ns, top_line, bot_line)
 
-  parser:for_each_tree(function(tree)
-    local language = tree:lang()
+  parser:for_each_tree(function(tree, lang_tree)
+    local language = lang_tree:lang()
     local language_cfg = M.get_language_number_nodes(language)
 
     local query = get_number_query(language_cfg)
