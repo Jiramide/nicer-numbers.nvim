@@ -1,7 +1,3 @@
----@class nicer-numbers.config
----@field languages table<string, LanguageNumberNode>
----@field default_number_nodes LanguageNumberNode
-
 ---@class nicer-numbers.main
 local M = {}
 
@@ -11,13 +7,15 @@ local M = {}
 ---@field has_distinct_floating_node boolean Whether a language distinguishes between integer and floating literals
 
 ---Produces the treesitter query for a given language node
----@param language_node LanguageNumberNode
-local function get_number_query(language_node)
-  if language_node.has_distinct_floating_node then
-    return ("(%s) @integer (%s) @float"):format(language_node.integer, language_node.float)
-  else
-    return ("(%s) @integer"):format(language_node.integer)
+---@param language_cfg LanguageConfig
+local function get_number_query(language_cfg)
+  local collected_node_types = {}
+
+  for _, node_type in ipairs(language_cfg.nodes) do
+    table.insert(collected_node_types, ("(%s)"):format(node_type))
   end
+
+  return ("[%s] @nicer-numbers"):format(collected_node_types)
 end
 
 local function update_number_signs(args)
@@ -27,24 +25,37 @@ local function update_number_signs(args)
     return
   end
 
-  local language = parser:lang()
-  local number_nodes = M.get_language_number_nodes(language)
-
-  local top_line = vim.fn.line("w0")
-  local bot_line = vim.fn.line("w$")
-
-  local query = get_number_query(number_nodes)
-  local ok, number_query = pcall(vim.treesitter.query.parse, language, query)
-
-  if ok == false then
-    return
-  end
+  -- vim.fn.line uses 1-based indexing, but treesitter uses 0-based indexing.
+  local top_line = vim.fn.line("w0") - 1
+  local bot_line = vim.fn.line("w$") - 1
 
   vim.api.nvim_buf_clear_namespace(bufnr, M.extmarks_ns, top_line, bot_line)
 
   parser:for_each_tree(function(tree)
+    local language = tree:lang()
+    local language_cfg = M.get_language_number_nodes(language)
+
+    local query = get_number_query(language_cfg)
+    local ok, number_query = pcall(vim.treesitter.query.parse, language, query)
+
+    if ok == false then
+      return
+    end
+
     for _, node, _, _ in number_query:iter_captures(tree:root(), bufnr, top_line, bot_line) do
       local text = vim.treesitter.get_node_text(node, bufnr)
+      local type = node:type()
+      local start_row, start_col = node:range()
+
+      local offsets = language_cfg.delimit_fn(text, type)
+      for _, offset in pairs(offsets) do
+        local col = start_col + offset
+        vim.api.nvim_buf_set_extmark(0, M.extmarks_ns, start_row, col, {
+          virt_text_pos = "inline",
+          virt_text = { { "_", "Number" } },
+          invalidate = true,
+        })
+      end
 
       ---@type table<integer, string?>
       local number_parts = vim.split(text, ".", { plain = true })
@@ -53,8 +64,6 @@ local function update_number_signs(args)
 
       if integral:match("_") == nil then
         -- Integer portion isn't already delimited.
-        local start_row, start_col = node:range()
-
         local starting_offset = #integral % 3
         if starting_offset == 0 then
           starting_offset = starting_offset + 3
@@ -72,7 +81,6 @@ local function update_number_signs(args)
 
       if floating ~= nil and floating:match("_") == nil then
         -- Integer portion isn't already delimited.
-        local start_row, start_col = node:range()
         -- shift by length of integral portion, plus one (for decimal point)
         local floating_offset = #integral + 1
 
@@ -96,14 +104,15 @@ end
 
 ---Produces the language node for a given language
 ---@param language string
----@return LanguageNumberNode
+---@return LanguageConfig
 function M.get_language_number_nodes(language)
   local number_nodes = M.cfg.languages[language]
+
   if number_nodes ~= nil then
     return number_nodes
   end
 
-  return M.cfg.default_number_nodes
+  return M.cfg.default
 end
 
 ---@param cfg nicer-numbers.config
